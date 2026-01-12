@@ -61,6 +61,25 @@ var KModsPlugin = class extends import_obsidian.Plugin {
           }
         })
       );
+      this.registerDomEvent(document, "keydown", (e) => {
+        if (e.key === "Escape" || e.code === "Escape") {
+          const activeView = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+          if (!activeView)
+            return;
+          const contentEl = activeView.contentEl;
+          const editorEl = contentEl.querySelector(".cm-editor");
+          const contentDOM = contentEl.querySelector(".cm-content");
+          if (contentDOM && (document.activeElement === contentDOM || (editorEl && editorEl.contains(document.activeElement)))) {
+            e.preventDefault();
+            e.stopPropagation();
+            contentDOM.blur();
+            if (editorEl) {
+              editorEl.blur();
+            }
+            activeView.editor.blur();
+          }
+        }
+      }, true);
     }
     if (this.settings.enableSnippetsManager && this.settings.showSnippetsStatusBar) {
       this.addSnippetsStatusBar();
@@ -818,6 +837,14 @@ var KModsSettingTab = class extends import_obsidian.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h2", { text: "kMods Settings" });
+    const manifest = this.plugin.manifest;
+    if (manifest && manifest.version) {
+      const versionEl = containerEl.createDiv({ cls: "setting-item-description" });
+      versionEl.style.marginTop = "-10px";
+      versionEl.style.marginBottom = "20px";
+      versionEl.style.opacity = "0.7";
+      versionEl.setText(`Version ${manifest.version}`);
+    }
     containerEl.createEl("p", {
       text: "A collection of miscellaneous tweaks for Obsidian. Each feature can be enabled or disabled independently.",
       cls: "setting-item-description"
