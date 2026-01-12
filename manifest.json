@@ -1,0 +1,10 @@
+{
+	"id": "kMods",
+	"name": "kMods",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "A collection of small miscellaneous tweaks for Obsidian.",
+	"author": "Kyle Youngblom",
+	"authorUrl": "",
+	"isDesktopOnly": false
+}
