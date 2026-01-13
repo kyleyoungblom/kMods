@@ -29,6 +29,7 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
+var SNIPPETS_VIEW_TYPE = "kmods-snippets-view";
 var DEFAULT_SETTINGS = {
   // Cursor management
   enableCursorHiding: true,
@@ -53,6 +54,10 @@ var KModsPlugin = class extends import_obsidian.Plugin {
   }
   async onload() {
     await this.loadSettings();
+    this.registerView(
+      SNIPPETS_VIEW_TYPE,
+      (leaf) => new SnippetsView(leaf, this)
+    );
     if (this.settings.enableCursorHiding) {
       this.registerEvent(
         this.app.workspace.on("file-open", (file) => {
@@ -108,14 +113,23 @@ var KModsPlugin = class extends import_obsidian.Plugin {
   addSnippetsStatusBar() {
     this.statusBarItem = this.addStatusBarItem();
     this.statusBarItem.addClass("kmods-snippets-status-bar");
-    this.statusBarItem.setText("CSS Snippets");
+    (0, import_obsidian.setIcon)(this.statusBarItem, "paintbrush");
     this.statusBarItem.addEventListener("click", (e) => {
       this.showSnippetsMenu(e);
     });
   }
-  showSnippetsMenu(e) {
-    const modal = new SnippetsModal(this.app, this);
-    modal.open();
+  async showSnippetsMenu(e) {
+    const existing = this.app.workspace.getLeavesOfType(SNIPPETS_VIEW_TYPE);
+    if (existing.length > 0) {
+      this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({
+      type: SNIPPETS_VIEW_TYPE,
+      active: true
+    });
+    this.app.workspace.revealLeaf(leaf);
   }
   hideCursorInActiveEditor() {
     const activeView = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
@@ -198,21 +212,18 @@ var KModsPlugin = class extends import_obsidian.Plugin {
     await plugins.saveData();
   }
   initializeBanners() {
-    this.registerMarkdownPostProcessor((el, ctx) => {
-      this.processBannerInReadingView(el, ctx);
-    });
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
-        this.updateBanner();
+        setTimeout(() => this.updateBanner(), 50);
       })
     );
     this.registerEvent(
       this.app.workspace.on("layout-change", () => {
-        this.updateBanner();
+        setTimeout(() => this.updateBanner(), 50);
       })
     );
     this.registerEvent(
-      this.app.vault.on("modify", (file) => {
+      this.app.metadataCache.on("changed", (file) => {
         const activeView = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
         if (activeView && activeView.file === file) {
           setTimeout(() => this.updateBanner(), 100);
@@ -231,140 +242,113 @@ var KModsPlugin = class extends import_obsidian.Plugin {
     const view = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
     if (!view || !view.file)
       return;
-    const contentEl = view.contentEl;
+    const viewContent = view.contentEl;
     const cache = this.app.metadataCache.getFileCache(view.file);
     const frontmatter = cache == null ? void 0 : cache.frontmatter;
     const bannerField = this.settings.bannerFrontmatterField;
-    let banner = frontmatter ? frontmatter[bannerField] : null;
-    if (!banner) {
-      const existingBanner = contentEl.querySelector(".kmods-banner-container");
+    let bannerSrc = frontmatter ? frontmatter[bannerField] : null;
+    const isReadingView = view.getMode() === "preview";
+    const sizer = isReadingView ? viewContent.querySelector(".markdown-preview-sizer") : viewContent.querySelector(".cm-sizer");
+    const scrollContainer = isReadingView ? viewContent.querySelector(".markdown-preview-view") : viewContent.querySelector(".cm-scroller");
+    if (!bannerSrc) {
+      const existingBanner = viewContent.querySelector(".kmods-banner-image");
       if (existingBanner) {
         existingBanner.remove();
       }
-      const cmSizer2 = contentEl.querySelector(".cm-sizer");
-      if (cmSizer2) {
-        cmSizer2.style.paddingTop = "";
+      if (sizer) {
+        sizer.style.paddingTop = "";
       }
+      viewContent.classList.remove("kmods-has-banner");
       return;
     }
-    if (banner.startsWith("[[") && banner.endsWith("]]")) {
-      const linkText = banner.slice(2, -2);
+    if (bannerSrc.startsWith("[[") && bannerSrc.endsWith("]]")) {
+      const linkText = bannerSrc.slice(2, -2);
       const file = this.app.metadataCache.getFirstLinkpathDest(linkText, "");
       if (file) {
-        banner = this.app.vault.adapter.getResourcePath(file.path);
+        bannerSrc = this.app.vault.adapter.getResourcePath(file.path);
       }
     }
-    const cmSizer = contentEl.querySelector(".cm-sizer");
-    if (!cmSizer)
+    if (!sizer || !scrollContainer)
       return;
-    let bannerContainer = cmSizer.querySelector(":scope > .kmods-banner-container");
-    if (!bannerContainer) {
-      bannerContainer = document.createElement("div");
-      bannerContainer.className = "kmods-banner-container";
-      cmSizer.insertBefore(bannerContainer, cmSizer.firstChild);
-    }
+    viewContent.classList.add("kmods-has-banner");
     const bannerHeight = frontmatter[`${bannerField}_height`] || this.settings.bannerHeight;
-    cmSizer.style.paddingTop = `${bannerHeight + 20}px`;
     const bannerY = frontmatter[`${bannerField}_y`] || 0.5;
-    bannerContainer.innerHTML = "";
-    bannerContainer.style.height = `${bannerHeight}px`;
-    const bannerDiv = document.createElement("div");
-    bannerDiv.className = "kmods-banner";
-    bannerDiv.style.height = `${bannerHeight}px`;
-    const img = document.createElement("img");
-    img.className = "kmods-banner-image";
-    img.src = banner;
-    img.alt = "";
-    img.style.objectPosition = `50% ${bannerY * 100}%`;
-    let isDragging = false;
-    let startY = 0;
-    let startPos = bannerY;
-    img.addEventListener("mousedown", (e) => {
-      if (e.button === 0) {
-        isDragging = true;
-        startY = e.clientY;
-        startPos = bannerY;
-        e.preventDefault();
-      }
-    });
-    document.addEventListener("mousemove", (e) => {
-      if (isDragging) {
-        const deltaY = e.clientY - startY;
-        const newPos = Math.max(0, Math.min(1, startPos - deltaY / bannerHeight));
-        img.style.objectPosition = `50% ${newPos * 100}%`;
-      }
-    });
-    document.addEventListener("mouseup", async (e) => {
-      if (isDragging) {
-        isDragging = false;
-        const deltaY = e.clientY - startY;
-        const newPos = Math.max(0, Math.min(1, startPos - deltaY / bannerHeight));
-        if (view.file) {
-          await this.app.fileManager.processFrontMatter(view.file, (fm) => {
-            fm[`${bannerField}_y`] = newPos;
-          });
-        }
-      }
-    });
-    img.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      const menu = new import_obsidian.Menu();
-      menu.addItem((item) => {
-        item.setTitle("Change banner image").setIcon("image").onClick(() => {
-          new ChangeBannerModal(this.app, this, view.file).open();
-        });
-      });
-      menu.addItem((item) => {
-        item.setTitle("Remove banner").setIcon("trash").onClick(async () => {
-          if (view.file) {
-            await this.app.fileManager.processFrontMatter(view.file, (fm) => {
-              delete fm[bannerField];
-              delete fm[`${bannerField}_y`];
-              delete fm[`${bannerField}_height`];
-            });
-            await this.updateBanner();
-          }
-        });
-      });
-      menu.showAtMouseEvent(e);
-    });
-    bannerDiv.appendChild(img);
-    bannerContainer.appendChild(bannerDiv);
-  }
-  processBannerInReadingView(el, ctx) {
-    const frontmatterEl = el.querySelector("pre.frontmatter");
-    if (!frontmatterEl)
-      return;
-    const file = this.app.vault.getAbstractFileByPath(ctx.sourcePath);
-    if (!file)
-      return;
-    const cache = this.app.metadataCache.getFileCache(file);
-    const frontmatter = cache == null ? void 0 : cache.frontmatter;
-    if (!frontmatter)
-      return;
-    const bannerField = this.settings.bannerFrontmatterField;
-    const banner = frontmatter[bannerField];
-    if (!banner)
-      return;
-    this.renderBanner(el, banner, frontmatter);
-  }
-  renderBanner(container, bannerSrc, frontmatter) {
-    const bannerField = this.settings.bannerFrontmatterField;
-    const wrapper = container.createDiv({ cls: "kmods-banner-wrapper" });
-    const bannerEl = wrapper.createDiv({ cls: "kmods-banner" });
-    bannerEl.style.setProperty("--banner-height", `${this.settings.bannerHeight}px`);
-    const img = bannerEl.createEl("img", {
-      cls: "kmods-banner-image",
-      attr: {
-        src: bannerSrc,
-        alt: "Banner"
-      }
-    });
-    const bannerY = frontmatter[`${bannerField}_y`];
-    if (bannerY !== void 0) {
-      img.style.objectPosition = `50% ${bannerY * 100}%`;
+    sizer.style.paddingTop = `${bannerHeight + 14}px`;
+    let bannerDiv = scrollContainer.querySelector(":scope > .kmods-banner-image");
+    if (!bannerDiv) {
+      bannerDiv = document.createElement("div");
+      bannerDiv.className = "kmods-banner-image";
+      scrollContainer.insertBefore(bannerDiv, scrollContainer.firstChild);
     }
-    container.insertBefore(wrapper, container.firstChild);
+    bannerDiv.style.height = `${bannerHeight}px`;
+    bannerDiv.style.backgroundImage = `url("${bannerSrc}")`;
+    bannerDiv.style.backgroundPosition = `50% ${bannerY * 100}%`;
+    if (!bannerDiv._kmodsInitialized) {
+      bannerDiv._kmodsInitialized = true;
+      bannerDiv._dragState = { isDragging: false, startY: 0, startPos: 0, currentPos: bannerY };
+      const plugin = this;
+      bannerDiv.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      bannerDiv.addEventListener("mousedown", (e) => {
+        if (e.button === 0) {
+          bannerDiv._dragState.isDragging = true;
+          bannerDiv._dragState.startY = e.clientY;
+          bannerDiv._dragState.startPos = bannerDiv._dragState.currentPos;
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      });
+      const onMouseMove = (e) => {
+        if (bannerDiv._dragState.isDragging) {
+          const height = parseInt(bannerDiv.style.height) || 200;
+          const deltaY = e.clientY - bannerDiv._dragState.startY;
+          bannerDiv._dragState.currentPos = Math.max(0, Math.min(1, bannerDiv._dragState.startPos - deltaY / height));
+          bannerDiv.style.backgroundPosition = `50% ${bannerDiv._dragState.currentPos * 100}%`;
+        }
+      };
+      const onMouseUp = async (e) => {
+        if (bannerDiv._dragState.isDragging) {
+          bannerDiv._dragState.isDragging = false;
+          const activeView = plugin.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+          if (activeView && activeView.file) {
+            const field = plugin.settings.bannerFrontmatterField;
+            await plugin.app.fileManager.processFrontMatter(activeView.file, (fm) => {
+              fm[`${field}_y`] = bannerDiv._dragState.currentPos;
+            });
+          }
+        }
+      };
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+      bannerDiv.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        const activeView = plugin.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+        if (!activeView || !activeView.file)
+          return;
+        const menu = new import_obsidian.Menu();
+        menu.addItem((item) => {
+          item.setTitle("Change banner image").setIcon("image").onClick(() => {
+            new ChangeBannerModal(plugin.app, plugin, activeView.file).open();
+          });
+        });
+        menu.addItem((item) => {
+          item.setTitle("Remove banner").setIcon("trash").onClick(async () => {
+            const field = plugin.settings.bannerFrontmatterField;
+            await plugin.app.fileManager.processFrontMatter(activeView.file, (fm) => {
+              delete fm[field];
+              delete fm[`${field}_y`];
+              delete fm[`${field}_height`];
+            });
+            plugin.updateBanner();
+          });
+        });
+        menu.showAtMouseEvent(e);
+      });
+    } else {
+      bannerDiv._dragState.currentPos = bannerY;
+    }
   }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -373,14 +357,27 @@ var KModsPlugin = class extends import_obsidian.Plugin {
     await this.saveData(this.settings);
   }
 };
-var SnippetsModal = class extends import_obsidian.Modal {
-  constructor(app, plugin) {
-    super(app);
+var SnippetsView = class extends import_obsidian.ItemView {
+  constructor(leaf, plugin) {
+    super(leaf);
     this.plugin = plugin;
   }
-  onOpen() {
-    const { contentEl } = this;
+  getViewType() {
+    return SNIPPETS_VIEW_TYPE;
+  }
+  getDisplayText() {
+    return "CSS Snippets";
+  }
+  getIcon() {
+    return "paintbrush";
+  }
+  async onOpen() {
+    this.renderContent();
+  }
+  renderContent() {
+    const contentEl = this.contentEl;
     contentEl.empty();
+    contentEl.addClass("kmods-snippets-view");
     contentEl.createEl("h2", { text: "CSS Snippets" });
     const customCss = this.app.customCss;
     if (!customCss) {
@@ -397,7 +394,7 @@ var SnippetsModal = class extends import_obsidian.Modal {
     bulkToggleSetting.addButton(
       (button) => button.setButtonText(anySnippetsDisabled ? "Re-enable all snippets" : "Disable all snippets").onClick(async () => {
         await this.toggleAllSnippets();
-        this.onOpen();
+        this.renderContent();
       })
     );
     new import_obsidian.Setting(contentEl).setName("Open snippets folder").setDesc("Open the CSS snippets folder in your file manager").addButton(
@@ -411,7 +408,14 @@ var SnippetsModal = class extends import_obsidian.Modal {
     contentEl.createEl("hr", { cls: "kmods-snippets-separator" });
     const snippetsContainer = contentEl.createDiv({ cls: "kmods-snippets-container" });
     currentSnippets.forEach((snippet) => {
-      new import_obsidian.Setting(snippetsContainer).setName(snippet).addToggle(
+      new import_obsidian.Setting(snippetsContainer).setName(snippet).addExtraButton(
+        (button) => button.setIcon("pencil").setTooltip("Edit snippet").onClick(async () => {
+          const snippetsPath = `${this.app.vault.configDir}/snippets`;
+          const basePath = this.app.vault.adapter.getBasePath();
+          const absolutePath = `${basePath}/${snippetsPath}/${snippet}.css`;
+          require("electron").shell.openPath(absolutePath);
+        })
+      ).addToggle(
         (toggle) => {
           var _a;
           return toggle.setValue(((_a = customCss.enabledSnippets) == null ? void 0 : _a.has(snippet)) || false).onChange((value) => {
@@ -445,9 +449,8 @@ var SnippetsModal = class extends import_obsidian.Modal {
       await this.plugin.saveSettings();
     }
   }
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
+  async onClose() {
+    this.contentEl.empty();
   }
 };
 var AddBannerModal = class extends import_obsidian.Modal {
