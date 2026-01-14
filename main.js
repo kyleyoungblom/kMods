@@ -44,7 +44,9 @@ var DEFAULT_SETTINGS = {
   // Banners
   enableBanners: true,
   bannerHeight: 200,
-  bannerFrontmatterField: "banner"
+  bannerFrontmatterField: "banner",
+  // Callout Editor
+  enableCalloutEditor: true
 };
 var KModsPlugin = class extends import_obsidian.Plugin {
   constructor() {
@@ -102,6 +104,9 @@ var KModsPlugin = class extends import_obsidian.Plugin {
     }
     if (this.settings.enableBanners) {
       this.initializeBanners();
+    }
+    if (this.settings.enableCalloutEditor) {
+      this.initializeCalloutEditor();
     }
     this.addSettingTab(new KModsSettingTab(this.app, this));
   }
@@ -349,6 +354,83 @@ var KModsPlugin = class extends import_obsidian.Plugin {
     } else {
       bannerDiv._dragState.currentPos = bannerY;
     }
+  }
+  initializeCalloutEditor() {
+    this.addCommand({
+      id: "edit-callout",
+      name: "Edit callout at cursor",
+      editorCallback: (editor, view) => {
+        const calloutData = this.getCalloutAtCursor(editor);
+        if (calloutData) {
+          new CalloutEditorModal(this.app, this, editor, calloutData).open();
+        } else {
+          new import_obsidian.Notice("No callout found at cursor position");
+        }
+      }
+    });
+    this.registerEvent(
+      this.app.workspace.on("editor-menu", (menu, editor, view) => {
+        const calloutData = this.getCalloutAtCursor(editor);
+        if (calloutData) {
+          menu.addItem((item) => {
+            item.setTitle("Edit callout")
+              .setIcon("edit")
+              .onClick(() => {
+                new CalloutEditorModal(this.app, this, editor, calloutData).open();
+              });
+          });
+        }
+      })
+    );
+  }
+  getCalloutAtCursor(editor) {
+    const cursor = editor.getCursor();
+    const lineCount = editor.lineCount();
+    let startLine = cursor.line;
+    let endLine = cursor.line;
+    const currentLineText = editor.getLine(cursor.line);
+    if (!currentLineText.trimStart().startsWith(">")) {
+      return null;
+    }
+    while (startLine > 0) {
+      const prevLine = editor.getLine(startLine - 1);
+      if (!prevLine.trimStart().startsWith(">")) {
+        break;
+      }
+      startLine--;
+    }
+    while (endLine < lineCount - 1) {
+      const nextLine = editor.getLine(endLine + 1);
+      if (!nextLine.trimStart().startsWith(">")) {
+        break;
+      }
+      endLine++;
+    }
+    const firstLine = editor.getLine(startLine);
+    const calloutMatch = firstLine.match(/^(\s*)>\s*\[!([^\]]+)\]\s*(.*)?$/);
+    if (!calloutMatch) {
+      return null;
+    }
+    const indent = calloutMatch[1];
+    const calloutType = calloutMatch[2];
+    const calloutTitle = calloutMatch[3] || "";
+    const lines = [];
+    for (let i = startLine; i <= endLine; i++) {
+      lines.push(editor.getLine(i));
+    }
+    const contentLines = lines.slice(1).map(line => {
+      const match = line.match(/^(\s*)>\s?(.*)$/);
+      return match ? match[2] : line;
+    });
+    return {
+      startLine,
+      endLine,
+      indent,
+      calloutType,
+      calloutTitle,
+      content: contentLines.join("\n"),
+      originalLines: lines
+    };
   }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -831,6 +913,110 @@ var ImageFileSuggester = class extends import_obsidian.Modal {
     contentEl.empty();
   }
 };
+var CalloutEditorModal = class extends import_obsidian.Modal {
+  constructor(app, plugin, editor, calloutData) {
+    super(app);
+    this.plugin = plugin;
+    this.editor = editor;
+    this.calloutData = calloutData;
+    this.content = calloutData.content;
+    this.calloutType = calloutData.calloutType;
+    this.calloutTitle = calloutData.calloutTitle;
+    this.previewEl = null;
+    this.debounceTimer = null;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("kmods-callout-editor");
+    const headerRow = contentEl.createDiv({ cls: "kmods-callout-editor-header" });
+    headerRow.createEl("h2", { text: "Edit Callout" });
+    const typeRow = headerRow.createDiv({ cls: "kmods-callout-type-row" });
+    typeRow.createSpan({ text: "Type: ", cls: "kmods-callout-label" });
+    const typeInput = typeRow.createEl("input", {
+      type: "text",
+      value: this.calloutType,
+      cls: "kmods-callout-type-input"
+    });
+    typeInput.addEventListener("input", (e) => {
+      this.calloutType = e.target.value;
+      this.updatePreview();
+    });
+    typeRow.createSpan({ text: " Title: ", cls: "kmods-callout-label" });
+    const titleInput = typeRow.createEl("input", {
+      type: "text",
+      value: this.calloutTitle,
+      cls: "kmods-callout-title-input"
+    });
+    titleInput.addEventListener("input", (e) => {
+      this.calloutTitle = e.target.value;
+      this.updatePreview();
+    });
+    const splitContainer = contentEl.createDiv({ cls: "kmods-callout-split" });
+    const editPane = splitContainer.createDiv({ cls: "kmods-callout-edit-pane" });
+    editPane.createEl("div", { text: "Edit", cls: "kmods-pane-label" });
+    const textarea = editPane.createEl("textarea", {
+      cls: "kmods-callout-textarea"
+    });
+    textarea.value = this.content;
+    textarea.addEventListener("input", (e) => {
+      this.content = e.target.value;
+      this.debouncedUpdatePreview();
+    });
+    const previewPane = splitContainer.createDiv({ cls: "kmods-callout-preview-pane" });
+    previewPane.createEl("div", { text: "Preview", cls: "kmods-pane-label" });
+    this.previewEl = previewPane.createDiv({ cls: "kmods-callout-preview markdown-rendered" });
+    this.updatePreview();
+    const buttonContainer = contentEl.createDiv({ cls: "modal-button-container" });
+    new import_obsidian.ButtonComponent(buttonContainer)
+      .setButtonText("Cancel")
+      .onClick(() => this.close());
+    new import_obsidian.ButtonComponent(buttonContainer)
+      .setButtonText("Save")
+      .setCta()
+      .onClick(() => this.save());
+    setTimeout(() => textarea.focus(), 50);
+  }
+  debouncedUpdatePreview() {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => this.updatePreview(), 150);
+  }
+  async updatePreview() {
+    if (!this.previewEl) return;
+    this.previewEl.empty();
+    const calloutMarkdown = `> [!${this.calloutType}] ${this.calloutTitle}\n` +
+      this.content.split("\n").map(line => `> ${line}`).join("\n");
+    await import_obsidian.MarkdownRenderer.renderMarkdown(
+      calloutMarkdown,
+      this.previewEl,
+      "",
+      null
+    );
+  }
+  save() {
+    const { indent, startLine, endLine } = this.calloutData;
+    const newLines = [];
+    newLines.push(`${indent}> [!${this.calloutType}] ${this.calloutTitle}`);
+    const contentLines = this.content.split("\n");
+    for (const line of contentLines) {
+      newLines.push(`${indent}> ${line}`);
+    }
+    const newText = newLines.join("\n");
+    const startPos = { line: startLine, ch: 0 };
+    const endPos = { line: endLine, ch: this.editor.getLine(endLine).length };
+    this.editor.replaceRange(newText, startPos, endPos);
+    this.close();
+  }
+  onClose() {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+};
 var KModsSettingTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -886,6 +1072,11 @@ var KModsSettingTab = class extends import_obsidian.PluginSettingTab {
     }));
     new import_obsidian.Setting(containerEl).setName("Frontmatter field name").setDesc('The frontmatter field to use for banner images (e.g., "banner").').addText((text) => text.setPlaceholder("banner").setValue(this.plugin.settings.bannerFrontmatterField).onChange(async (value) => {
       this.plugin.settings.bannerFrontmatterField = value || "banner";
+      await this.plugin.saveSettings();
+    }));
+    this.addSectionHeader(containerEl, "Callout Editor");
+    new import_obsidian.Setting(containerEl).setName("Enable callout editor").setDesc("Edit callouts in a modal with live preview. Right-click a callout or use the command palette. Requires reload to take effect.").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableCalloutEditor).onChange(async (value) => {
+      this.plugin.settings.enableCalloutEditor = value;
       await this.plugin.saveSettings();
     }));
   }

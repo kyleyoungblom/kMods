@@ -115,3 +115,106 @@
 		padding-top: 164px !important;
 	}
 }
+
+/* Callout Editor Modal */
+.kmods-callout-editor {
+	width: 80vw;
+	max-width: 1200px;
+}
+
+.kmods-callout-editor-header {
+	margin-bottom: 16px;
+}
+
+.kmods-callout-editor-header h2 {
+	margin-bottom: 12px;
+}
+
+.kmods-callout-type-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.kmods-callout-label {
+	color: var(--text-muted);
+	font-size: 13px;
+}
+
+.kmods-callout-type-input {
+	width: 120px;
+	padding: 4px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+}
+
+.kmods-callout-title-input {
+	flex: 1;
+	min-width: 150px;
+	padding: 4px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 4px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+}
+
+.kmods-callout-split {
+	display: flex;
+	gap: 16px;
+	height: 50vh;
+	min-height: 300px;
+}
+
+.kmods-callout-edit-pane,
+.kmods-callout-preview-pane {
+	flex: 1;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.kmods-pane-label {
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-muted);
+	margin-bottom: 8px;
+}
+
+.kmods-callout-textarea {
+	flex: 1;
+	width: 100%;
+	padding: 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-family: var(--font-monospace);
+	font-size: 14px;
+	line-height: 1.5;
+	resize: none;
+}
+
+.kmods-callout-textarea:focus {
+	outline: none;
+	border-color: var(--interactive-accent);
+}
+
+.kmods-callout-preview {
+	flex: 1;
+	padding: 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	overflow-y: auto;
+}
+
+.kmods-callout-editor .modal-button-container {
+	display: flex;
+	justify-content: flex-end;
+	gap: 10px;
+	margin-top: 16px;
+}
